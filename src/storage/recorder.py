@@ -143,6 +143,7 @@ class Recorder:
             qw, qx, qy, qz,
             depth_file, fix.confidence,
         ])
+        self._frame_index_file.flush()
 
     def write_imu(self, sample: IMUSample):
         """Write one raw IMU sample to binary file (for offline reprocessing)"""
@@ -164,3 +165,4 @@ class Recorder:
             fix.timestamp_ns, fix.lat, fix.lon, fix.alt,
             fix.heading, fix.speed, fix.fix_quality, fix.num_satellites,
         ])
+        self._gps_file.flush()

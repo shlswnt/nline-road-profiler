@@ -34,6 +34,7 @@ class StorageConfig:
     ssd_mount: Path = Path("/mnt/ssd")
     sessions_dir: Path = Path("/mnt/ssd/sessions")
     compression: str = "lz4"
+    min_free_gb: float = 1.0
 
 
 @dataclass(frozen=True)

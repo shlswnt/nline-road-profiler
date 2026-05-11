@@ -1,4 +1,5 @@
 import logging
+import shutil
 import signal
 import threading
 import time
@@ -7,6 +8,8 @@ from src.config import Config
 from src.hardware.camera import Camera
 from src.hardware.gps import GPS
 from src.storage.recorder import Recorder
+
+SSD_CHECK_INTERVAL = 300  # check SSD space every 300 frames (~20s at 15 FPS)
 
 logger = logging.getLogger(__name__)
 
@@ -98,25 +101,40 @@ class Profiler:
 
     def _loop(self):
         """Capture loop: grab frames, sync data, write to disk"""
-        while self._running:
-            # Get next depth frame (non-blocking)
-            frame = self._camera.frames()
-            if frame is None:
-                time.sleep(0.001)
-                continue
+        try:
+            while self._running:
+                # Get next depth frame (non-blocking)
+                frame = self._camera.frames()
+                if frame is None:
+                    time.sleep(0.001)
+                    continue
 
-            # Get interpolated GPS position for this frame
-            fix = self._gps.interpolate(frame.timestamp_ns)
+                # Get interpolated GPS position for this frame
+                fix = self._gps.interpolate(frame.timestamp_ns)
 
-            # Get latest IMU orientation
-            orientation = self._camera.get_imu.get_orientation
+                # Get latest IMU orientation
+                orientation = self._camera.get_imu.get_orientation
 
-            # Write synchronized data to SSD
-            self._recorder.write_depth(frame, fix, orientation)
-            self._frame_count += 1
+                # Write synchronized data to SSD
+                try:
+                    self._recorder.write_depth(frame, fix, orientation)
+                    self._frame_count += 1
+                except OSError:
+                    logger.exception("Write error — stopping recording")
+                    break
 
-        self._recorder.stop()
-        logger.info("Recording stopped")
+                # Periodic SSD space check
+                if self._frame_count % SSD_CHECK_INTERVAL == 0:
+                    free_gb = shutil.disk_usage(str(self._config.storage.ssd_mount)).free / (1024 ** 3)
+                    if free_gb < self._config.storage.min_free_gb:
+                        logger.warning("SSD low: %.1f GB free — stopping recording", free_gb)
+                        break
+        except Exception:
+            logger.exception("Capture loop error")
+        finally:
+            self._running = False
+            self._recorder.stop()
+            logger.info("Recording stopped")
 
 
 def main():
