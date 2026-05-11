@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Road Profiler</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #0f1117;
+            color: #e1e4e8;
+            padding: 16px;
+            max-width: 480px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            color: #f0f0f0;
+        }
+
+        h2 {
+            font-size: 14px;
+            font-weight: 600;
+            color: #8b949e;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+
+        .card {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 14px;
+            margin-bottom: 12px;
+        }
+
+        .status-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 6px 0;
+        }
+
+        .status-row:not(:last-child) {
+            border-bottom: 1px solid #21262d;
+        }
+
+        .status-label {
+            font-size: 13px;
+            color: #8b949e;
+        }
+
+        .status-value {
+            font-size: 13px;
+            font-weight: 500;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 6px;
+            vertical-align: middle;
+        }
+
+        .dot-green { background: #3fb950; }
+        .dot-red { background: #f85149; }
+        .dot-yellow { background: #d29922; }
+
+        .controls {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        button {
+            flex: 1;
+            padding: 12px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: opacity 0.15s;
+        }
+
+        button:active { opacity: 0.8; }
+        button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+        .btn-start { background: #238636; color: #fff; }
+        .btn-stop { background: #da3633; color: #fff; }
+
+        .recording-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .recording-badge.active {
+            background: #238636;
+            color: #fff;
+            animation: pulse 1.5s infinite;
+        }
+
+        .recording-badge.inactive {
+            background: #30363d;
+            color: #8b949e;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+
+        .session-list {
+            list-style: none;
+        }
+
+        .session-list li {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            font-size: 13px;
+            border-bottom: 1px solid #21262d;
+        }
+
+        .session-list li:last-child { border-bottom: none; }
+
+        .session-size {
+            color: #8b949e;
+        }
+
+        /* Calibration dialog */
+        .overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 100;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .overlay.visible { display: flex; }
+
+        .dialog {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            padding: 20px;
+            max-width: 360px;
+            margin: 16px;
+        }
+
+        .dialog p {
+            font-size: 14px;
+            line-height: 1.5;
+            margin-bottom: 16px;
+            color: #c9d1d9;
+        }
+
+        .dialog-buttons {
+            display: flex;
+            gap: 8px;
+        }
+
+        .dialog-buttons button {
+            font-size: 13px;
+            padding: 10px;
+        }
+
+        .btn-confirm { background: #238636; color: #fff; }
+        .btn-cancel { background: #30363d; color: #c9d1d9; }
+    </style>
+</head>
+<body>
+    <!-- Controls -->
+    <div class="controls">
+        <button class="btn-start" id="btn-start" onclick="showCalibrationDialog()">Start Session</button>
+        <button class="btn-stop" id="btn-stop" onclick="stopSession()" disabled>Stop Session</button>
+    </div>
+
+    <!-- Recording status -->
+    <div class="card">
+        <h2>Session</h2>
+        <div class="status-row">
+            <span class="status-label">Status</span>
+            <span id="recording-status"><span class="recording-badge inactive">Idle</span></span>
+        </div>
+        <div class="status-row">
+            <span class="status-label">Duration</span>
+            <span class="status-value" id="duration">--:--</span>
+        </div>
+        <div class="status-row">
+            <span class="status-label">Frames</span>
+            <span class="status-value" id="frame-count">0</span>
+        </div>
+    </div>
+
+    <!-- Sensor status -->
+    <div class="card">
+        <h2>Sensors</h2>
+        <div class="status-row">
+            <span class="status-label">GPS Fix</span>
+            <span class="status-value" id="gps-fix"><span class="dot dot-red"></span>No fix</span>
+        </div>
+        <div class="status-row">
+            <span class="status-label">Satellites</span>
+            <span class="status-value" id="gps-sats">0</span>
+        </div>
+        <div class="status-row">
+            <span class="status-label">Position</span>
+            <span class="status-value" id="gps-pos">--</span>
+        </div>
+    </div>
+
+    <!-- Storage -->
+    <div class="card">
+        <h2>Storage</h2>
+        <div class="status-row">
+            <span class="status-label">SSD Free</span>
+            <span class="status-value" id="ssd-free">-- GB</span>
+        </div>
+    </div>
+
+    <!-- Past sessions -->
+    <div class="card">
+        <h2>Sessions</h2>
+        <ul class="session-list" id="session-list">
+            <li><span style="color: #8b949e">Loading...</span></li>
+        </ul>
+    </div>
+
+    <!-- Calibration confirmation dialog -->
+    <div class="overlay" id="calibration-dialog">
+        <div class="dialog">
+            <p>Keep the vehicle stationary on flat ground. The system will calibrate the camera mounting angle (~1 second) before recording begins.</p>
+            <div class="dialog-buttons">
+                <button class="btn-cancel" onclick="hideCalibrationDialog()">Cancel</button>
+                <button class="btn-confirm" onclick="startSession()">Vehicle is stopped — Start</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+
+        function connectWebSocket() {
+            const proto = location.protocol === "https:" ? "wss:" : "ws:";
+            ws = new WebSocket(`${proto}//${location.host}/ws`);
+
+            ws.onmessage = (e) => {
+                const s = JSON.parse(e.data);
+                updateStatus(s);
+            };
+
+            ws.onclose = () => {
+                setTimeout(connectWebSocket, 2000);
+            };
+        }
+
+        function updateStatus(s) {
+            // Recording state
+            const statusEl = document.getElementById("recording-status");
+            const startBtn = document.getElementById("btn-start");
+            const stopBtn = document.getElementById("btn-stop");
+
+            if (s.recording) {
+                statusEl.innerHTML = '<span class="recording-badge active">Recording</span>';
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+            } else {
+                statusEl.innerHTML = '<span class="recording-badge inactive">Idle</span>';
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+            }
+
+            // Duration
+            const dur = s.duration_s || 0;
+            const min = Math.floor(dur / 60);
+            const sec = Math.floor(dur % 60);
+            document.getElementById("duration").textContent =
+                `${String(min).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+
+            // Frame count
+            document.getElementById("frame-count").textContent = s.frame_count.toLocaleString();
+
+            // GPS
+            if (s.gps.has_fix) {
+                document.getElementById("gps-fix").innerHTML =
+                    '<span class="dot dot-green"></span>Fix';
+                document.getElementById("gps-pos").textContent =
+                    `${s.gps.lat.toFixed(5)}, ${s.gps.lon.toFixed(5)}`;
+            } else {
+                document.getElementById("gps-fix").innerHTML =
+                    '<span class="dot dot-red"></span>No fix';
+                document.getElementById("gps-pos").textContent = "--";
+            }
+            document.getElementById("gps-sats").textContent = s.gps.satellites;
+
+            // SSD
+            document.getElementById("ssd-free").textContent = `${s.ssd.free_gb} GB`;
+        }
+
+        async function showCalibrationDialog() {
+            document.getElementById("calibration-dialog").classList.add("visible");
+        }
+
+        function hideCalibrationDialog() {
+            document.getElementById("calibration-dialog").classList.remove("visible");
+        }
+
+        async function startSession() {
+            hideCalibrationDialog();
+            document.getElementById("btn-start").disabled = true;
+
+            const res = await fetch("/session/start", { method: "POST" });
+            const data = await res.json();
+            if (data.status === "error") {
+                alert(data.message);
+                document.getElementById("btn-start").disabled = false;
+            }
+        }
+
+        async function stopSession() {
+            document.getElementById("btn-stop").disabled = true;
+
+            const res = await fetch("/session/stop", { method: "POST" });
+            const data = await res.json();
+            if (data.status === "error") {
+                alert(data.message);
+                document.getElementById("btn-stop").disabled = false;
+            }
+            loadSessions();
+        }
+
+        async function loadSessions() {
+            const res = await fetch("/sessions");
+            const data = await res.json();
+            const list = document.getElementById("session-list");
+
+            if (data.sessions.length === 0) {
+                list.innerHTML = '<li><span style="color: #8b949e">No sessions yet</span></li>';
+                return;
+            }
+
+            list.innerHTML = data.sessions.map(s =>
+                `<li><span>${s.session_id}</span><span class="session-size">${s.size_mb} MB</span></li>`
+            ).join("");
+        }
+
+        // Init
+        connectWebSocket();
+        loadSessions();
+    </script>
+</body>
+</html>
