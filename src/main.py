@@ -25,9 +25,9 @@ class Profiler:
 
     def __init__(self, config: Config = Config()):
         self._config = config
-        self._camera = Camera(config.camera, config.imu)
-        self._gps = GPS(config.gps)
         self._recorder = Recorder(config)
+        self._camera = Camera(config.camera, config.imu, on_imu_sample=self._recorder.write_imu)
+        self._gps = GPS(config.gps, on_fix=self._recorder.write_gps)
         self._running = False
         self._thread: threading.Thread | None = None
         self._start_time: float = 0.0
@@ -81,6 +81,8 @@ class Profiler:
         if self._thread:
             self._thread.join(timeout=5.0)
             self._thread = None
+        self._frame_count = 0
+        self._start_time = 0.0
 
     def shutdown(self):
         """Stop recording and shutdown sensors"""

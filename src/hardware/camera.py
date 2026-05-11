@@ -49,13 +49,13 @@ class Camera:
     """
 
     def __init__(self, camera_config: CameraConfig = CameraConfig(),
-                 imu_config: IMUConfig = IMUConfig()):
+                 imu_config: IMUConfig = IMUConfig(), on_imu_sample=None):
         self._camera_config = camera_config
         self._imu_config = imu_config
-        self._device: dai.Device | None = None
+        self._on_imu_sample = on_imu_sample  # callback per raw IMU sample: fn(IMUSample)
         self._pipeline: dai.Pipeline | None = None
-        self._depth_queue: dai.DataOutputQueue | None = None
-        self._imu_queue: dai.DataOutputQueue | None = None
+        self._depth_queue = None
+        self._imu_queue = None
         self._imu = IMU(imu_config)
         self._intrinsics: Intrinsics | None = None
         self._frame_num = 0
@@ -73,12 +73,29 @@ class Camera:
         return self._imu
 
     def start(self):
-        """Build pipeline, connect to device, read calibration, start IMU"""
-        self._pipeline = self._pipeline()
-        self._device = dai.Device(self._pipeline)
+        """Build pipeline, start device, read calibration, start IMU"""
+        self._pipeline = dai.Pipeline()
+
+        # ToF depth node (v3: build() auto-connects to CAM_A internally)
+        tof = self._pipeline.create(dai.node.ToF).build()
+
+        # IMU node (shares pipeline with ToF)
+        imu_node = self._pipeline.create(dai.node.IMU)
+        imu_node.enableIMUSensor(dai.IMUSensor.ACCELEROMETER_RAW, self._imu_config.imu_rate)
+        imu_node.enableIMUSensor(dai.IMUSensor.GYROSCOPE_RAW, self._imu_config.imu_rate)
+        imu_node.setBatchReportThreshold(1)
+        imu_node.setMaxBatchReports(10)
+
+        # Create output queues (v3: directly on node outputs, no XLinkOut)
+        self._depth_queue = tof.depth.createOutputQueue()
+        self._imu_queue = imu_node.out.createOutputQueue()
+
+        # Start pipeline (v3: pipeline.start(), no dai.Device(pipeline))
+        self._pipeline.start()
 
         # Read factory calibration from device EEPROM
-        calib = self._device.readCalibration()
+        device = self._pipeline.getDefaultDevice()
+        calib = device.readCalibration()
         matrix = calib.getCameraIntrinsics(dai.CameraBoardSocket.CAM_A)
         distortion = calib.getDistortionCoefficients(dai.CameraBoardSocket.CAM_A)
         self._intrinsics = Intrinsics(
@@ -86,10 +103,6 @@ class Camera:
             cx=matrix[0][2], cy=matrix[1][2],
             distortion=distortion,
         )
-
-        # Get output queues
-        self._depth_queue = self._device.getOutputQueue("depth", maxSize=4, blocking=False)
-        self._imu_queue = self._device.getOutputQueue("imu", maxSize=50, blocking=False)
 
         # Start IMU processing in background thread
         self._imu.start()
@@ -111,9 +124,9 @@ class Camera:
         if self._imu_thread:
             self._imu_thread.join(timeout=2.0)
             self._imu_thread = None
-        if self._device:
-            self._device.close()
-            self._device = None
+        if self._pipeline:
+            self._pipeline.stop()
+            self._pipeline = None
         logger.info("Camera stopped")
 
     def calibrate(self) -> Calibration:
@@ -122,7 +135,7 @@ class Camera:
         samples = []
         deadline = time.monotonic() + duration_s
 
-        # Sample accelerometer for callibration duration
+        # Sample accelerometer for calibration duration
         while time.monotonic() < deadline:
             imu_data = self._imu_queue.tryGet()
             if imu_data is None:
@@ -171,36 +184,6 @@ class Camera:
         self._frame_num += 1
         return frame
 
-    def _pipeline(self) -> dai.Pipeline:
-        """Construct DepthAI pipeline with ToF depth + IMU nodes"""
-        pipeline = dai.Pipeline()
-
-        # ToF depth node
-        tof = pipeline.create(dai.node.ToF)
-        cam_tof = pipeline.create(dai.node.Camera)
-        cam_tof.setBoardSocket(dai.CameraBoardSocket.CAM_A)
-        cam_tof.setFps(self._camera_config.depth_fps)
-        cam_tof.raw.link(tof.input)
-
-        # Depth output
-        depth_out = pipeline.create(dai.node.XLinkOut)
-        depth_out.setStreamName("depth")
-        tof.depth.link(depth_out.input)
-
-        # IMU node (shares pipeline with ToF)
-        imu = pipeline.create(dai.node.IMU)
-        imu.enableIMUSensor(dai.IMUSensor.ACCELEROMETER_RAW, self._imu_config.imu_rate)
-        imu.enableIMUSensor(dai.IMUSensor.GYROSCOPE_RAW, self._imu_config.imu_rate)
-        imu.setBatchReportThreshold(1)
-        imu.setMaxBatchReports(10)
-
-        # IMU output
-        imu_out = pipeline.create(dai.node.XLinkOut)
-        imu_out.setStreamName("imu")
-        imu.out.link(imu_out.input)
-
-        return pipeline
-
     def _loop(self):
         """Background thread to read IMU packets and feed to Madgwick filter"""
         while self._running:
@@ -218,6 +201,8 @@ class Camera:
                         gyro=np.array([gyro.x, gyro.y, gyro.z]),
                     )
                     self._imu.update(sample)
+                    if self._on_imu_sample:
+                        self._on_imu_sample(sample)
             except Exception:
                 if self._running:
                     logger.exception("IMU read error")

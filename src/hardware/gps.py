@@ -50,8 +50,9 @@ class GPS:
     # Buffer holds ~5 seconds of 10 Hz fixes
     BUFFER_SIZE = 50
 
-    def __init__(self, config: GPSConfig = GPSConfig()):
+    def __init__(self, config: GPSConfig = GPSConfig(), on_fix=None):
         self._config = config
+        self._on_fix = on_fix  # callback per raw fix: fn(GPSFix)
         self._buffer: deque[GPSFix] = deque(maxlen=self.BUFFER_SIZE)
         self._lock = threading.Lock()
         self._serial: serial.Serial | None = None
@@ -160,8 +161,10 @@ class GPS:
         """Parse GGA and RMC sentences into GPS fixes"""
         # GGA provides: lat, lon, alt, fix quality, satellite count
         if msg.msgID == "GGA":
-            self._pending_lat = getattr(msg, "lat", None)
-            self._pending_lon = getattr(msg, "lon", None)
+            raw_lat = getattr(msg, "lat", None) or None
+            raw_lon = getattr(msg, "lon", None) or None
+            self._pending_lat = float(raw_lat) if raw_lat is not None else None
+            self._pending_lon = float(raw_lon) if raw_lon is not None else None
             self._pending_alt = float(getattr(msg, "alt", 0) or 0)
             self._pending_fix_quality = int(getattr(msg, "quality", 0) or 0)
             self._pending_num_satellites = int(getattr(msg, "numSV", 0) or 0)
@@ -169,10 +172,12 @@ class GPS:
         # RMC provides: heading, speed, and triggers fix creation
         elif msg.msgID == "RMC":
             # RMC completes the fix by combining with pending GGA data
-            lat = getattr(msg, "lat", None)
-            lon = getattr(msg, "lon", None)
-            if lat is None or lon is None:
+            raw_lat = getattr(msg, "lat", None) or None
+            raw_lon = getattr(msg, "lon", None) or None
+            if raw_lat is None or raw_lon is None:
                 return
+            lat = float(raw_lat)
+            lon = float(raw_lon)
 
             # Prefer GGA lat/lon if available (has altitude), fall back to RMC
             fix = GPSFix(
@@ -188,6 +193,9 @@ class GPS:
 
             with self._lock:
                 self._buffer.append(fix)
+
+            if self._on_fix:
+                self._on_fix(fix)
 
             # Reset pending state
             self._pending_lat = None

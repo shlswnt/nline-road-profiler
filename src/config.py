@@ -10,7 +10,7 @@ class APIConfig:
 class CameraConfig:
     calibration_duration_s: float = 1.0
     calibration_accel_std_threshold: float = 0.1
-    depth_fps: int = 15
+    depth_fps: int = 30
     depth_width: int = 640
     depth_height: int = 480
 
