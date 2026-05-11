@@ -56,7 +56,7 @@ class Recorder:
     def start(self, intrinsics: Intrinsics, calibration: Calibration):
         """Create session directory and open all output files"""
         self._session_id = time.strftime("%Y%m%d_%H%M%S")
-        self._session_dir = self._config.storage.drives_dir / self._session_id
+        self._session_dir = self._config.storage.sessions_dir / self._session_id
         self._frames_dir = self._session_dir / "frames"
         self._frames_dir.mkdir(parents=True)
 

@@ -32,7 +32,7 @@ class IMUConfig:
 @dataclass(frozen=True)
 class StorageConfig:
     ssd_mount: Path = Path("/mnt/ssd")
-    drives_dir: Path = Path("/mnt/ssd/drives")
+    sessions_dir: Path = Path("/mnt/ssd/sessions")
     compression: str = "lz4"
 
 
