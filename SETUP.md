@@ -1,4 +1,20 @@
-## 1. Raspberry Pi OS installation
+# Setup Guide
+
+## Required Components
+
+- Raspberry Pi 5 (16 GB)
+- Micro SD card (32 GB+)
+- Power supply for Pi (27W / 5.1V 5A)
+- Luxonis OAK-D-SR-POE camera
+- PoE injector (12V barrel jack input)
+- 12V power supply for PoE injector
+- M12/RJ45 Ethernet Cable
+- SparkFun NEO-M9N GPS module
+- USB SSD
+- USB Wi-Fi adapter (BrosTrend AX900)
+- Camera hood mount
+
+## 1. Raspberry Pi OS Installation
 
 Open Raspberry Pi Imager on your computer.
 
@@ -16,14 +32,14 @@ Open Raspberry Pi Imager on your computer.
 
 Insert SD card into Pi and boot.
 
-## 2. System packages
+## 2. System Packages
 
 ```bash
 sudo apt update && sudo apt full-upgrade -y
 sudo apt install -y git curl build-essential python3-dev libusb-1.0-0-dev cmake exfatprogs
 ```
 
-## 3. uv + Python 3.12
+## 3. Python Environment
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -32,7 +48,7 @@ echo 'source $HOME/.local/bin/env' >> ~/.bashrc
 uv python install 3.12
 ```
 
-## 4. USB SSD setup
+## 4. SSD Setup
 
 Plug in the SSD and find the device name:
 
@@ -74,7 +90,7 @@ Verify:
 df -h /mnt/ssd
 ```
 
-## 5. Static IP for OAK-D-SR-POE camera
+## 5. Camera Setup
 
 ```bash
 sudo nmcli connection add type ethernet ifname eth0 \
@@ -93,7 +109,7 @@ Verify camera is reachable (plug in PoE injector + camera first):
 ping -c 3 169.254.1.222
 ```
 
-## 6. GPS udev rule
+## 6. GPS Setup
 
 Plug in the NEO-M9N via USB, then check vendor/product ID:
 
@@ -123,7 +139,7 @@ Verify:
 ls -la /dev/gps
 ```
 
-## 7. Wi-Fi access point (for session control UI + SSH)
+## 7. WiFi AP Setup
 
 ### BrosTrend AX900 (needs driver install)
 
@@ -161,7 +177,7 @@ sudo nmcli connection up road-profiler-ap
 
 Verify: connect phone to "ROAD-PROFILER".
 
-## 8. Project setup
+## 8. Project Setup
 
 From your development machine, copy the project to the Pi:
 
@@ -188,7 +204,7 @@ Install dependencies:
 uv pip install .
 ```
 
-## 9. systemd service (auto-start on boot)
+## 9. Service Setup
 
 ```bash
 sudo tee /etc/systemd/system/road-profiler.service <<EOF
@@ -222,7 +238,7 @@ sudo systemctl status road-profiler
 journalctl -u road-profiler -f   # live logs
 ```
 
-## 10. Reboot and verify
+## 10. Reboot
 
 ```bash
 sudo reboot now
