@@ -77,7 +77,20 @@ class Camera:
         self._pipeline = dai.Pipeline()
 
         # ToF depth node (v3: build() auto-connects to CAM_A internally)
-        tof = self._pipeline.create(dai.node.ToF).build()
+        tof = self._pipeline.create(dai.node.ToF)
+
+        # Tune ToF for motion blur reduction at driving speed.
+        # Run sensor at max internal FPS (shorter integration = less blur).
+        # Burst mode OFF so sensor can hit ~80 FPS output (burst caps at 40).
+        # Phase shuffle temporal filter OFF prevents frame reuse across time.
+        tof_config = tof.getInitialConfig()
+        tof_config.enablePhaseShuffleTemporalFilter = False
+        tof_config.phaseUnwrappingLevel = 4                  # keep full range (~7.5m)
+        tof_config.enableOpticalCorrection = True
+        tof_config.enableBurstMode = False
+        tof.setInitialConfig(tof_config)
+
+        tof.build()
 
         # IMU node (shares pipeline with ToF)
         imu_node = self._pipeline.create(dai.node.IMU)

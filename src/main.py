@@ -102,7 +102,14 @@ class Profiler:
         return time.monotonic() - self._start_time
 
     def _loop(self):
-        """Capture loop: grab frames, sync data, write to disk"""
+        """Capture loop: grab frames, sync data, write to disk
+
+        ToF runs at max internal FPS for motion blur reduction, but we only
+        save at the configured depth_fps to keep storage reasonable.
+        """
+        save_interval_ns = int(1e9 / self._config.camera.depth_fps)
+        last_save_ns = 0
+
         try:
             while self._running:
                 # Get next depth frame (non-blocking)
@@ -110,6 +117,11 @@ class Profiler:
                 if frame is None:
                     time.sleep(0.001)
                     continue
+
+                # Decimate: only save at configured depth_fps
+                if frame.timestamp_ns - last_save_ns < save_interval_ns:
+                    continue
+                last_save_ns = frame.timestamp_ns
 
                 # Get interpolated GPS position for this frame
                 fix = self._gps.interpolate(frame.timestamp_ns)
