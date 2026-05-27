@@ -155,7 +155,7 @@ The Wi-Fi network configured during OS installation (via netplan) may claim wlan
 # Find the netplan Wi-Fi connection name
 nmcli -t -f NAME,TYPE connection show | grep wireless
 
-# Lock it to wlan0 (replace YOUR_WIFI_CONNECTION with the name from above)
+# Lock it to wlan0 (replace YOUR_WIFI_CONNECTION with the name from above [everything before the :])
 sudo nmcli connection modify "YOUR_WIFI_CONNECTION" connection.interface-name wlan0
 ```
 
