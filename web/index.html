@@ -181,6 +181,80 @@
 
         .btn-confirm { background: #238636; color: #fff; }
         .btn-cancel { background: #30363d; color: #c9d1d9; }
+
+        /* Stream viewer */
+        .stream-card {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            margin-bottom: 12px;
+            overflow: hidden;
+        }
+
+        .stream-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 14px;
+        }
+
+        .stream-toggle {
+            display: flex;
+            gap: 4px;
+            background: #0d1117;
+            border-radius: 6px;
+            padding: 2px;
+        }
+
+        .stream-toggle button {
+            flex: none;
+            padding: 5px 12px;
+            font-size: 12px;
+            font-weight: 500;
+            border-radius: 4px;
+            background: transparent;
+            color: #8b949e;
+        }
+
+        .stream-toggle button.active {
+            background: #30363d;
+            color: #e1e4e8;
+        }
+
+        .stream-img {
+            width: 100%;
+            display: block;
+            aspect-ratio: 4/3;
+            background: #0d1117;
+            object-fit: contain;
+        }
+
+        /* Calibration spinner */
+        .calibrating {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 12px;
+            padding: 8px 0;
+        }
+
+        .spinner {
+            width: 28px;
+            height: 28px;
+            border: 3px solid #30363d;
+            border-top-color: #58a6ff;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .calibrating-text {
+            font-size: 14px;
+            color: #c9d1d9;
+        }
     </style>
 </head>
 <body>
@@ -188,6 +262,18 @@
     <div class="controls">
         <button class="btn-start" id="btn-start" onclick="showCalibrationDialog()">Start Session</button>
         <button class="btn-stop" id="btn-stop" onclick="stopSession()" disabled>Stop Session</button>
+    </div>
+
+    <!-- Camera stream -->
+    <div class="stream-card">
+        <div class="stream-header">
+            <h2>Camera</h2>
+            <div class="stream-toggle">
+                <button id="btn-depth" class="active" onclick="setStream('depth')">Depth</button>
+                <button id="btn-rgb" onclick="setStream('rgb')">RGB</button>
+            </div>
+        </div>
+        <img class="stream-img" id="stream-img" src="/stream/depth" alt="Camera stream">
     </div>
 
     <!-- Recording status -->
@@ -222,6 +308,14 @@
             <span class="status-label">Position</span>
             <span class="status-value" id="gps-pos">--</span>
         </div>
+        <div class="status-row" style="border-top: 1px solid #21262d; margin-top: 4px; padding-top: 10px;">
+            <span class="status-label">IMU</span>
+            <span class="status-value" id="imu-status"><span class="dot dot-red"></span>Inactive</span>
+        </div>
+        <div class="status-row">
+            <span class="status-label">Roll / Pitch / Yaw</span>
+            <span class="status-value" id="imu-euler">--</span>
+        </div>
     </div>
 
     <!-- Storage -->
@@ -244,10 +338,18 @@
     <!-- Calibration confirmation dialog -->
     <div class="overlay" id="calibration-dialog">
         <div class="dialog">
-            <p>Make sure vehicle is stationary for inital mounting callibration!</p>
-            <div class="dialog-buttons">
-                <button class="btn-cancel" onclick="hideCalibrationDialog()">Cancel</button>
-                <button class="btn-confirm" onclick="startSession()">Start</button>
+            <div id="dialog-confirm">
+                <p>Make sure vehicle is stationary for initial mounting calibration!</p>
+                <div class="dialog-buttons">
+                    <button class="btn-cancel" onclick="hideCalibrationDialog()">Cancel</button>
+                    <button class="btn-confirm" onclick="startSession()">Start</button>
+                </div>
+            </div>
+            <div id="dialog-calibrating" style="display:none;">
+                <div class="calibrating">
+                    <div class="spinner"></div>
+                    <span class="calibrating-text">Calibrating...</span>
+                </div>
             </div>
         </div>
     </div>
@@ -308,11 +410,31 @@
             }
             document.getElementById("gps-sats").textContent = s.gps.satellites;
 
+            // IMU
+            if (s.imu && s.imu.active) {
+                document.getElementById("imu-status").innerHTML =
+                    '<span class="dot dot-green"></span>Active';
+                document.getElementById("imu-euler").textContent =
+                    `${s.imu.roll}° / ${s.imu.pitch}° / ${s.imu.yaw}°`;
+            } else {
+                document.getElementById("imu-status").innerHTML =
+                    '<span class="dot dot-red"></span>Inactive';
+                document.getElementById("imu-euler").textContent = "--";
+            }
+
             // SSD
             document.getElementById("ssd-free").textContent = `${s.ssd.free_gb} GB`;
         }
 
-        async function showCalibrationDialog() {
+        function setStream(mode) {
+            document.getElementById("stream-img").src = "/stream/" + mode;
+            document.getElementById("btn-depth").classList.toggle("active", mode === "depth");
+            document.getElementById("btn-rgb").classList.toggle("active", mode === "rgb");
+        }
+
+        function showCalibrationDialog() {
+            document.getElementById("dialog-confirm").style.display = "";
+            document.getElementById("dialog-calibrating").style.display = "none";
             document.getElementById("calibration-dialog").classList.add("visible");
         }
 
@@ -321,15 +443,24 @@
         }
 
         async function startSession() {
-            hideCalibrationDialog();
-            document.getElementById("btn-start").disabled = true;
+            // Switch to calibrating state
+            document.getElementById("dialog-confirm").style.display = "none";
+            document.getElementById("dialog-calibrating").style.display = "";
 
-            const res = await fetch("/session/start", { method: "POST" });
-            const data = await res.json();
-            if (data.status === "error") {
-                alert(data.message);
-                document.getElementById("btn-start").disabled = false;
+            try {
+                const res = await fetch("/session/start", { method: "POST" });
+                const data = await res.json();
+                if (data.status === "error") {
+                    hideCalibrationDialog();
+                    alert(data.message);
+                    return;
+                }
+            } catch {
+                hideCalibrationDialog();
+                alert("Failed to start session");
+                return;
             }
+            hideCalibrationDialog();
         }
 
         async function stopSession() {

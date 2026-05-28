@@ -5,7 +5,7 @@ description = ""
 requires-python = ">=3.12"
 dependencies = [
     "depthai>=3.0.0",
-    "opencv-python>=4.0.0",
+    "opencv-python-headless>=4.0.0",
     "pynmeagps>=1.0.0",
     "pyubx2>=1.0.0",
     "pyserial>=3.5",

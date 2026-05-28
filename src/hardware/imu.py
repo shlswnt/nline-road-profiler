@@ -61,6 +61,26 @@ class IMU:
                 qw=q[0], qx=q[1], qy=q[2], qz=q[3],
             )
 
+    @property
+    def get_euler(self) -> tuple[float, float, float] | None:
+        """Most recent orientation as (roll, pitch, yaw) in degrees, or None"""
+        with self._lock:
+            if self._last_timestamp_ns is None:
+                return None
+            q = self._quaternion
+            # Quaternion [w,x,y,z] to Euler angles
+            w, x, y, z = q[0], q[1], q[2], q[3]
+            sinr = 2.0 * (w * x + y * z)
+            cosr = 1.0 - 2.0 * (x * x + y * y)
+            roll = np.degrees(np.arctan2(sinr, cosr))
+            sinp = 2.0 * (w * y - z * x)
+            sinp = np.clip(sinp, -1.0, 1.0)
+            pitch = np.degrees(np.arcsin(sinp))
+            siny = 2.0 * (w * z + x * y)
+            cosy = 1.0 - 2.0 * (y * y + z * z)
+            yaw = np.degrees(np.arctan2(siny, cosy))
+            return (float(roll), float(pitch), float(yaw))
+
     def start(self):
         """Initialize filter state"""
         self._running = True

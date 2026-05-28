@@ -3,6 +3,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 
+import cv2
 import depthai as dai
 import numpy as np
 
@@ -55,12 +56,19 @@ class Camera:
         self._on_imu_sample = on_imu_sample  # callback per raw IMU sample: fn(IMUSample)
         self._pipeline: dai.Pipeline | None = None
         self._depth_queue = None
+        self._rgb_queue = None
         self._imu_queue = None
         self._imu = IMU(imu_config)
         self._intrinsics: Intrinsics | None = None
         self._frame_num = 0
         self._running = False
         self._imu_thread: threading.Thread | None = None
+        self._preview_thread: threading.Thread | None = None
+        # Latest frames for preview streaming (updated by background thread)
+        self._latest_depth: np.ndarray | None = None
+        self._latest_rgb: np.ndarray | None = None
+        self._latest_depth_frame: DepthFrame | None = None
+        self._frame_lock = threading.Lock()
 
     @property
     def get_intrinsics(self) -> Intrinsics | None:
@@ -92,6 +100,9 @@ class Camera:
 
         tof.build()
 
+        # RGB camera node (CAM_B = left stereo camera, global shutter OV9782)
+        cam_rgb = self._pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_B)
+
         # IMU node (shares pipeline with ToF)
         imu_node = self._pipeline.create(dai.node.IMU)
         imu_node.enableIMUSensor(dai.IMUSensor.ACCELEROMETER_RAW, self._imu_config.imu_rate)
@@ -101,6 +112,7 @@ class Camera:
 
         # Create output queues (v3: directly on node outputs, no XLinkOut)
         self._depth_queue = tof.depth.createOutputQueue()
+        self._rgb_queue = cam_rgb.requestOutput((640, 480)).createOutputQueue()
         self._imu_queue = imu_node.out.createOutputQueue()
 
         # Start pipeline (v3: pipeline.start(), no dai.Device(pipeline))
@@ -117,12 +129,14 @@ class Camera:
             distortion=distortion,
         )
 
-        # Start IMU processing in background thread
+        # Start IMU and preview processing in background threads
         self._imu.start()
         self._running = True
         self._frame_num = 0
-        self._imu_thread = threading.Thread(target=self._loop, daemon=True)
+        self._imu_thread = threading.Thread(target=self._imu_loop, daemon=True)
         self._imu_thread.start()
+        self._preview_thread = threading.Thread(target=self._preview_loop, daemon=True)
+        self._preview_thread.start()
 
         logger.info("Camera started — %dx%d @ %d FPS, intrinsics: fx=%.1f fy=%.1f cx=%.1f cy=%.1f",
                      self._camera_config.depth_width, self._camera_config.depth_height,
@@ -137,9 +151,15 @@ class Camera:
         if self._imu_thread:
             self._imu_thread.join(timeout=2.0)
             self._imu_thread = None
+        if self._preview_thread:
+            self._preview_thread.join(timeout=2.0)
+            self._preview_thread = None
         if self._pipeline:
             self._pipeline.stop()
             self._pipeline = None
+        self._latest_depth = None
+        self._latest_rgb = None
+        self._latest_depth_frame = None
         logger.info("Camera stopped")
 
     def calibrate(self) -> Calibration:
@@ -181,23 +201,65 @@ class Camera:
         return Calibration(mounting_angle_rad=mounting_angle_rad, accel_std=accel_std)
 
     def frames(self) -> DepthFrame | None:
-        """Get next depth frame, or None if not available (Non-blocking)"""
-        if not self._running or self._depth_queue is None:
+        """Get latest depth frame from buffer, or None (non-blocking)"""
+        with self._frame_lock:
+            frame = self._latest_depth_frame
+            self._latest_depth_frame = None  # consume it
+            return frame
+
+    def get_depth_jpeg(self) -> bytes | None:
+        """Latest depth frame as colorized JPEG for preview streaming"""
+        depth = self._latest_depth
+        if depth is None:
             return None
+        # Normalize to 0-255, apply colormap
+        max_depth = 7500  # mm, matches phaseUnwrappingLevel=4
+        normalized = np.clip(depth.astype(np.float32) / max_depth * 255, 0, 255).astype(np.uint8)
+        colored = cv2.applyColorMap(normalized, cv2.COLORMAP_TURBO)
+        # Zero-depth pixels -> black
+        colored[depth == 0] = 0
+        _, jpeg = cv2.imencode(".jpg", colored, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        return jpeg.tobytes()
 
-        depth_data = self._depth_queue.tryGet()
-        if depth_data is None:
+    def get_rgb_jpeg(self) -> bytes | None:
+        """Latest RGB frame as JPEG for preview streaming"""
+        rgb = self._latest_rgb
+        if rgb is None:
             return None
+        _, jpeg = cv2.imencode(".jpg", rgb, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        return jpeg.tobytes()
 
-        frame = DepthFrame(
-            timestamp_ns=time.monotonic_ns(),
-            frame_num=self._frame_num,
-            data=depth_data.getFrame(),
-        )
-        self._frame_num += 1
-        return frame
+    def _preview_loop(self):
+        """Background thread to consume depth + RGB frames into preview buffers"""
+        while self._running:
+            try:
+                # Depth
+                depth_data = self._depth_queue.tryGet()
+                if depth_data is not None:
+                    raw = depth_data.getFrame()
+                    self._latest_depth = raw
+                    frame = DepthFrame(
+                        timestamp_ns=time.monotonic_ns(),
+                        frame_num=self._frame_num,
+                        data=raw,
+                    )
+                    self._frame_num += 1
+                    with self._frame_lock:
+                        self._latest_depth_frame = frame
 
-    def _loop(self):
+                # RGB
+                rgb_data = self._rgb_queue.tryGet()
+                if rgb_data is not None:
+                    self._latest_rgb = rgb_data.getCvFrame()
+
+                if depth_data is None and rgb_data is None:
+                    time.sleep(0.001)
+            except Exception:
+                if self._running:
+                    logger.exception("Preview loop error")
+                    time.sleep(0.01)
+
+    def _imu_loop(self):
         """Background thread to read IMU packets and feed to Madgwick filter"""
         while self._running:
             try:
